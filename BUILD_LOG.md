@@ -1,0 +1,39 @@
+# Paper Analysis Engine — 构建日志
+
+> 项目：学术论文智能评级系统  
+> 创建时间：2026-06-27  
+> 版本：MVP Phase 1（基础骨架）
+
+---
+
+## 构建结果
+
+| 模块 | 文件 | 状态 |
+|------|------|------|
+| 评级引擎 | `engine/rating.py` | ✅ 五大维度 + 量化公式 |
+| 数据库 | `engine/database.py` | ✅ SQLite 7 表 |
+| API 客户端 | `engine/api_client.py` | ✅ Semantic Scholar + OpenAlex |
+| CLI 入口 | `main.py` | ✅ search/show/top/init |
+| 配置 | `engine/config.py` | ✅ 权重/阈值/期刊分级 |
+| 依赖 | `requirements.txt` | ✅ |
+
+## 评级测试结果
+
+| 论文 | 年份 | 引用 | 综合分 | 等级 |
+|------|------|------|--------|------|
+| Attention Is All You Need | 2017 | 120K | 49.7 | C |
+| GNN Social Networks | 2023 | 12 | 27.0 | D |
+| Quantum Protein Folding | 2025 | 8 | 47.6 | C |
+
+### 已知局限
+
+1. **创新指数偏低**：基于关键词匹配（novel/new/state-of-the-art），对 Transformer 这类范式级创新识别不足。Phase 2 需接入 LLM 做内容级评估。
+2. **商业转化潜力**：同样靠关键词，无专利/投资数据。
+3. **组合价值**：需要传入相关论文列表，MVP 返回基线分 50。
+4. **引用衰减**：5 年半衰期对 CS 论文偏短，9 年论文衰减 70%。
+
+### 下一步
+
+- Phase 2: LLM + RAG 创新评估
+- Phase 3: 接入专利/投资数据
+- Phase 4: 知识图谱组合分析
