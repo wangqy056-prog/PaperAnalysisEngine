@@ -21,3 +21,6 @@ backend/push_queue/
 
 # 旧数据目录
 data/
+
+# 内部文档（不进公开仓库）
+docs-internal/
