@@ -1,0 +1,551 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Paper Analysis Engine — 给论文评级、给技术定价</title>
+    <meta name="description" content="学术论文智能评级系统：五维量化评分 + 知识图谱 + AI 智能分析">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+                         "Microsoft YaHei", Roboto, Helvetica, Arial, sans-serif;
+            background: #1a1a2e;
+            color: #e8e8e8;
+            line-height: 1.6;
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+
+        /* 背景渐变光晕 */
+        body::before {
+            content: "";
+            position: fixed;
+            top: -200px;
+            right: -200px;
+            width: 600px;
+            height: 600px;
+            background: radial-gradient(circle, rgba(233, 69, 96, 0.15) 0%, transparent 70%);
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        body::after {
+            content: "";
+            position: fixed;
+            bottom: -200px;
+            left: -200px;
+            width: 600px;
+            height: 600px;
+            background: radial-gradient(circle, rgba(72, 187, 120, 0.1) 0%, transparent 70%);
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        .container {
+            position: relative;
+            z-index: 1;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 24px;
+        }
+
+        /* Header */
+        header {
+            padding: 24px 0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+        }
+
+        .logo {
+            font-size: 20px;
+            font-weight: 700;
+            color: #e94560;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .logo-icon {
+            font-size: 24px;
+        }
+
+        .header-links {
+            display: flex;
+            gap: 24px;
+            font-size: 14px;
+        }
+
+        .header-links a {
+            color: #a0a0b8;
+            text-decoration: none;
+            transition: color 0.2s;
+        }
+
+        .header-links a:hover {
+            color: #e94560;
+        }
+
+        /* Hero Section */
+        .hero {
+            padding: 100px 0 80px;
+            text-align: center;
+        }
+
+        .hero-badge {
+            display: inline-block;
+            padding: 6px 16px;
+            background: rgba(233, 69, 96, 0.1);
+            border: 1px solid rgba(233, 69, 96, 0.3);
+            border-radius: 20px;
+            font-size: 13px;
+            color: #e94560;
+            margin-bottom: 24px;
+            font-weight: 500;
+        }
+
+        .hero h1 {
+            font-size: 56px;
+            font-weight: 800;
+            line-height: 1.2;
+            margin-bottom: 24px;
+            background: linear-gradient(135deg, #ffffff 0%, #e94560 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .hero .subtitle {
+            font-size: 20px;
+            color: #a0a0b8;
+            margin-bottom: 16px;
+            font-weight: 300;
+        }
+
+        .hero .tagline {
+            font-size: 16px;
+            color: #7878a0;
+            margin-bottom: 48px;
+        }
+
+        .hero-stats {
+            display: flex;
+            justify-content: center;
+            gap: 48px;
+            margin-bottom: 48px;
+            flex-wrap: wrap;
+        }
+
+        .stat {
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 32px;
+            font-weight: 700;
+            color: #e94560;
+            line-height: 1;
+        }
+
+        .stat-label {
+            font-size: 13px;
+            color: #7878a0;
+            margin-top: 8px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .cta-button {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            padding: 16px 40px;
+            background: #e94560;
+            color: #ffffff;
+            text-decoration: none;
+            border-radius: 8px;
+            font-size: 18px;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            box-shadow: 0 8px 24px rgba(233, 69, 96, 0.3);
+        }
+
+        .cta-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 12px 32px rgba(233, 69, 96, 0.4);
+            background: #f05675;
+        }
+
+        .cta-button svg {
+            width: 20px;
+            height: 20px;
+        }
+
+        /* Features Section */
+        .features {
+            padding: 80px 0;
+        }
+
+        .section-title {
+            text-align: center;
+            font-size: 36px;
+            font-weight: 700;
+            margin-bottom: 16px;
+            color: #ffffff;
+        }
+
+        .section-subtitle {
+            text-align: center;
+            font-size: 16px;
+            color: #7878a0;
+            margin-bottom: 64px;
+        }
+
+        .features-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 32px;
+        }
+
+        .feature-card {
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 16px;
+            padding: 40px 32px;
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .feature-card::before {
+            content: "";
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: linear-gradient(90deg, #e94560, #f05675);
+            transform: scaleX(0);
+            transform-origin: left;
+            transition: transform 0.3s ease;
+        }
+
+        .feature-card:hover {
+            transform: translateY(-4px);
+            border-color: rgba(233, 69, 96, 0.3);
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        .feature-card:hover::before {
+            transform: scaleX(1);
+        }
+
+        .feature-icon {
+            width: 56px;
+            height: 56px;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 28px;
+            margin-bottom: 24px;
+        }
+
+        .feature-icon.academic {
+            background: linear-gradient(135deg, rgba(233, 69, 96, 0.2), rgba(233, 69, 96, 0.05));
+            border: 1px solid rgba(233, 69, 96, 0.3);
+        }
+
+        .feature-icon.commercial {
+            background: linear-gradient(135deg, rgba(72, 187, 120, 0.2), rgba(72, 187, 120, 0.05));
+            border: 1px solid rgba(72, 187, 120, 0.3);
+        }
+
+        .feature-icon.graph {
+            background: linear-gradient(135deg, rgba(66, 153, 225, 0.2), rgba(66, 153, 225, 0.05));
+            border: 1px solid rgba(66, 153, 225, 0.3);
+        }
+
+        .feature-card h3 {
+            font-size: 22px;
+            font-weight: 700;
+            margin-bottom: 12px;
+            color: #ffffff;
+        }
+
+        .feature-card p {
+            font-size: 15px;
+            color: #a0a0b8;
+            line-height: 1.7;
+        }
+
+        .feature-list {
+            list-style: none;
+            margin-top: 16px;
+        }
+
+        .feature-list li {
+            font-size: 14px;
+            color: #7878a0;
+            padding: 4px 0;
+            padding-left: 20px;
+            position: relative;
+        }
+
+        .feature-list li::before {
+            content: "▸";
+            position: absolute;
+            left: 0;
+            color: #e94560;
+        }
+
+        /* Tech Stack Section */
+        .tech-stack {
+            padding: 80px 0;
+            background: rgba(0, 0, 0, 0.2);
+            border-top: 1px solid rgba(255, 255, 255, 0.05);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .tech-grid {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 16px;
+            margin-top: 40px;
+        }
+
+        .tech-item {
+            padding: 12px 24px;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 24px;
+            font-size: 14px;
+            color: #a0a0b8;
+            transition: all 0.2s;
+        }
+
+        .tech-item:hover {
+            border-color: #e94560;
+            color: #e94560;
+        }
+
+        /* Footer */
+        footer {
+            padding: 48px 0 32px;
+            text-align: center;
+            border-top: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .footer-content {
+            color: #7878a0;
+            font-size: 14px;
+        }
+
+        .footer-license {
+            margin-top: 16px;
+            padding: 12px 24px;
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 8px;
+            display: inline-block;
+            font-size: 13px;
+        }
+
+        .footer-license a {
+            color: #e94560;
+            text-decoration: none;
+        }
+
+        .footer-license a:hover {
+            text-decoration: underline;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .hero {
+                padding: 60px 0 40px;
+            }
+
+            .hero h1 {
+                font-size: 36px;
+            }
+
+            .hero .subtitle {
+                font-size: 16px;
+            }
+
+            .hero-stats {
+                gap: 24px;
+            }
+
+            .stat-value {
+                font-size: 24px;
+            }
+
+            .section-title {
+                font-size: 28px;
+            }
+
+            .features-grid {
+                grid-template-columns: 1fr;
+                gap: 24px;
+            }
+
+            .feature-card {
+                padding: 32px 24px;
+            }
+
+            .cta-button {
+                padding: 14px 28px;
+                font-size: 16px;
+            }
+
+            .header-links {
+                gap: 16px;
+                font-size: 13px;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .hero h1 {
+                font-size: 28px;
+            }
+
+            .hero-badge {
+                font-size: 11px;
+            }
+
+            .hero-stats {
+                gap: 16px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="logo">
+                <span class="logo-icon">📊</span>
+                <span>PAE</span>
+            </div>
+            <nav class="header-links">
+                <a href="#features">功能</a>
+                <a href="https://github.com/wangqy056-prog/PaperAnalysisEngine" target="_blank" rel="noopener">GitHub</a>
+            </nav>
+        </header>
+
+        <section class="hero">
+            <div class="hero-badge">🔥 开源 · AGPL v3 · Docker 一键部署</div>
+            <h1>Paper Analysis Engine</h1>
+            <p class="subtitle">给论文评级、给技术定价</p>
+            <p class="tagline">五维量化评分 + 知识图谱 + AI 智能分析</p>
+
+            <div class="hero-stats">
+                <div class="stat">
+                    <div class="stat-value">5</div>
+                    <div class="stat-label">评级维度</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-value">3</div>
+                    <div class="stat-label">LLM 引擎</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-value">5</div>
+                    <div class="stat-label">图谱类型</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-value">48+</div>
+                    <div class="stat-label">API 端点</div>
+                </div>
+            </div>
+
+            <a href="https://github.com/wangqy056-prog/PaperAnalysisEngine" target="_blank" rel="noopener" class="cta-button">
+                <svg viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
+                </svg>
+                在 GitHub 上查看
+            </a>
+        </section>
+
+        <section class="features" id="features">
+            <h2 class="section-title">为什么选择 PAE？</h2>
+            <p class="section-subtitle">一站式论文分析平台，从评级到商业化预测全覆盖</p>
+
+            <div class="features-grid">
+                <div class="feature-card">
+                    <div class="feature-icon academic">🎯</div>
+                    <h3>学术评级</h3>
+                    <p>五维量化评分体系，告别"凭感觉判断论文价值"的时代。</p>
+                    <ul class="feature-list">
+                        <li>学术影响力（引用量 + 时间衰减 + 期刊权重）</li>
+                        <li>创新指数（原创性 + 方法论 + 理论贡献）</li>
+                        <li>可复现性（数据公开 + 代码可用性）</li>
+                        <li>S/A/B/C/D 五级评级，一目了然</li>
+                    </ul>
+                </div>
+
+                <div class="feature-card">
+                    <div class="feature-icon commercial">💰</div>
+                    <h3>商业预测</h3>
+                    <p>从学术价值到商业价值的桥梁，预测技术商业化时间线。</p>
+                    <ul class="feature-list">
+                        <li>TRL 技术成熟度评估（1-9 级）</li>
+                        <li>预计商业化时间预测</li>
+                        <li>专利布局与市场规模分析</li>
+                        <li>组合价值评估（协同度算法）</li>
+                    </ul>
+                </div>
+
+                <div class="feature-card">
+                    <div class="feature-icon graph">🕸️</div>
+                    <h3>知识图谱</h3>
+                    <p>可视化论文之间的引用、合作、相似关系，发现隐藏的连接。</p>
+                    <ul class="feature-list">
+                        <li>领域共现网络（学科交叉分析）</li>
+                        <li>作者合作网络（学者关系图谱）</li>
+                        <li>关键词共现（研究热点发现）</li>
+                        <li>引用网络 + 论文相似网络</li>
+                    </ul>
+                </div>
+            </div>
+        </section>
+
+        <section class="tech-stack">
+            <h2 class="section-title">技术栈</h2>
+            <p class="section-subtitle">现代化的前后端分离架构</p>
+            <div class="tech-grid">
+                <div class="tech-item">Python 3.11+</div>
+                <div class="tech-item">FastAPI</div>
+                <div class="tech-item">Vue 3</div>
+                <div class="tech-item">Element Plus</div>
+                <div class="tech-item">ECharts</div>
+                <div class="tech-item">vis-network</div>
+                <div class="tech-item">SQLite</div>
+                <div class="tech-item">Docker</div>
+                <div class="tech-item">DeepSeek</div>
+                <div class="tech-item">Groq Llama 3.3</div>
+                <div class="tech-item">智谱 GLM-4</div>
+                <div class="tech-item">Playwright</div>
+            </div>
+        </section>
+
+        <footer>
+            <div class="footer-content">
+                <p>Made with ❤️ by Paper Analysis Engine Team</p>
+                <p style="margin-top: 8px; font-size: 13px;">© 2026 Paper Analysis Engine. All rights reserved.</p>
+            </div>
+            <div class="footer-license">
+                📄 开源协议：<a href="https://www.gnu.org/licenses/agpl-3.0.html" target="_blank" rel="noopener">GNU Affero General Public License v3.0</a>
+            </div>
+        </footer>
+    </div>
+</body>
+</html>
