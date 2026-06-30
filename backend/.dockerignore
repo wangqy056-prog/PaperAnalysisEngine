@@ -1,0 +1,10 @@
+# Backend Docker Ignore
+__pycache__/
+*.pyc
+.env
+.env.local
+papers.db
+data/
+.DS_Store
+.git/
+*.log

@@ -1,0 +1,51 @@
+# Paper Analysis Engine - Docker Compose
+# 一键启动：后端 API + 前端页面 + SQLite 数据库
+
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: paper-analysis-backend
+    ports:
+      - "8001:8001"
+    volumes:
+      # 数据库持久化（使用 named volume，避免 Docker 创建目录）
+      - paper-db:/app/backend/data
+      # .env 文件（包含 API Key）
+      - ./.env:/app/backend/.env
+    environment:
+      # 从 .env 文件读取环境变量
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - GLM_API_KEY=${GLM_API_KEY}
+      - LLM_PROVIDER=${LLM_PROVIDER:-deepseek}
+      - PYTHONPATH=/app/backend
+      # 数据库路径（指向 named volume 目录）
+      - DATABASE_PATH=/app/backend/data/papers.db
+    restart: unless-stopped
+    networks:
+      - paper-analysis-network
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: paper-analysis-frontend
+    ports:
+      - "5173:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+    networks:
+      - paper-analysis-network
+
+networks:
+  paper-analysis-network:
+    driver: bridge
+
+volumes:
+  paper-db:
+    driver: local

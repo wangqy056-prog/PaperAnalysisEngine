@@ -1,0 +1,19 @@
+{
+  "manifest_version": 2,
+  "name": "PAE Rating for Zotero",
+  "version": "0.1.0",
+  "description": "在 Zotero 中显示论文 PAE 五维评级徽章。保存论文时自动查询 PAE API 并标注彩色评分。",
+  "author": "Paper Analysis Engine",
+  "homepage_url": "https://github.com/PaperAnalysisEngine/PaperAnalysisEngine",
+  "icons": {
+    "48": "icons/icon-48.png",
+    "96": "icons/icon-96.png"
+  },
+  "applications": {
+    "zotero": {
+      "id": "pae-rating@example.com",
+      "strict_min_version": "7.0",
+      "strict_max_version": "7.99"
+    }
+  }
+}

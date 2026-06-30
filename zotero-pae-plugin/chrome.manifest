@@ -1,0 +1,3 @@
+content pae-rating@example.com jar:chrome/pae.jar!/
+skin pae-rating classic/1.0 jar:chrome/pae.jar!/skin/
+resource pae-rating .
