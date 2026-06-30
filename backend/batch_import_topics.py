@@ -118,8 +118,12 @@ def batch_import(categories: list = None, per_topic: int = 20, sources: list = N
             total_topics_done += 1
             print(f"\n  [{total_topics_done}/{total_topics}] {topic}")
 
-            stored = import_topic(topic, per_topic, sources, rate=True)
-            total_stored += stored
+            try:
+                stored = import_topic(topic, per_topic, sources, rate=True)
+                total_stored += stored
+            except Exception as e:
+                print(f"  [SKIP] {topic} 失败: {e}")
+                continue
 
             # 避免请求过快
             time.sleep(1)
@@ -195,7 +199,7 @@ if __name__ == "__main__":
     parser.add_argument("--categories", nargs="+", help="指定分类名称")
     parser.add_argument("-n", "--per-topic", type=int, default=20, help="每主题数量 (默认20)")
     parser.add_argument("-s", "--sources", nargs="+", choices=["ss", "oa", "arxiv"],
-                        default=["oa"], help="数据源 (默认 oa)")
+                        default=["arxiv"], help="数据源 (默认 arxiv)")
     parser.add_argument("--list", action="store_true", help="列出所有主题")
     parser.add_argument("--add", nargs=2, metavar=("CATEGORY", "TOPIC"), action="append",
                         help="添加自定义主题 (可多次使用)")

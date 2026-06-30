@@ -436,6 +436,10 @@ def get_stats() -> dict:
     """)
     stats["level_distribution"] = {row["rating_level"]: row["count"] for row in cursor.fetchall()}
 
+    # 年份分布统计
+    cursor.execute("SELECT year, COUNT(*) as count FROM papers WHERE year IS NOT NULL GROUP BY year ORDER BY year")
+    stats["year_distribution"] = {row["year"]: row["count"] for row in cursor.fetchall()}
+
     conn.close()
     return stats
 

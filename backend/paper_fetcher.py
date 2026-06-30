@@ -23,7 +23,7 @@ def _request_with_retry(session: requests.Session, url: str, max_retries: int = 
     for attempt in range(max_retries):
         try:
             # 第一次尝试正常 SSL
-            resp = session.get(url, timeout=timeout, **kwargs)
+            resp = session.get(url, timeout=(10, 30), **kwargs)
             if resp.status_code == 429:
                 wait = min(2 ** attempt * 2, 30)  # 2, 4, 8... 最多30秒
                 print(f"    [限流] 429, 等待 {wait}s 后重试 ({attempt+1}/{max_retries})")
@@ -36,7 +36,7 @@ def _request_with_retry(session: requests.Session, url: str, max_retries: int = 
             try:
                 print(f"    [SSL] 降级重试 ({attempt+1}/{max_retries})")
                 kwargs["verify"] = False
-                resp = session.get(url, timeout=timeout, **kwargs)
+                resp = session.get(url, timeout=(10, 30), **kwargs)
                 resp.raise_for_status()
                 return resp
             except requests.RequestException as e:
@@ -56,6 +56,9 @@ def _request_with_retry(session: requests.Session, url: str, max_retries: int = 
                 time.sleep(1)
             else:
                 raise
+        except Exception as e:
+            print(f"  [FATAL] 请求异常: {e}")
+            return None
     return None
 
 
@@ -145,7 +148,7 @@ class SemanticScholarAPI:
 class OpenAlexAPI:
     """OpenAlex API 封装"""
     BASE_URL = "https://api.openalex.org"
-    RATE_LIMIT_DELAY = 0.5
+    RATE_LIMIT_DELAY = 5.0
 
     def __init__(self, email: str = "user@example.com"):
         self.session = requests.Session()

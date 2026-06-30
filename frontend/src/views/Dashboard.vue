@@ -104,18 +104,14 @@ const radarChart = computed(() => {
 })
 
 const yearChart = computed(() => {
-  if (!ratings.value.length) return {}
-  const yearCount = {}
-  ratings.value.forEach(r => {
-    const y = r.year
-    if (y) yearCount[y] = (yearCount[y] || 0) + 1
-  })
-  const sorted = Object.entries(yearCount).sort((a, b) => a[0] - b[0])
+  const dist = stats.value?.year_distribution || {}
+  const sorted = Object.entries(dist).sort((a, b) => a[0] - b[0])
+  const data = sorted.map(([k, v]) => ({ value: v, name: k }))
   return {
     tooltip: { trigger: 'axis' },
-    xAxis: { type: 'category', data: sorted.map(s => s[0]) },
+    xAxis: { type: 'category', data: data.map(d => d.name) },
     yAxis: { type: 'value' },
-    series: [{ type: 'line', data: sorted.map(s => s[1]), name: '论文数', smooth: true, areaStyle: {} }],
+    series: [{ type: 'bar', data, name: '论文数' }],
   }
 })
 </script>
