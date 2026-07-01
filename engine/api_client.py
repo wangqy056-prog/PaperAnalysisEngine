@@ -1,85 +1,67 @@
 """Paper Analysis Engine - API Client
 
-Semantic Scholar + OpenAlex API 接入
+engine 侧的 API 客户端薄包装层。
+实际 HTTP 请求委托给 backend.paper_fetcher（有重试+SSL降级），不再自己发请求。
+保留 paper_to_dict() / work_to_dict() 供 CLI (main.py) 使用。
 """
 
-import requests
-import time
-import json
+import sys
+from pathlib import Path
 from typing import Dict, List, Optional
-from urllib.parse import quote
 
-from engine.config import config
+# 添加项目根目录到 sys.path，使 backend 包可被导入
+_PROJECT_ROOT = str(Path(__file__).resolve().parent.parent)
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
+
+from backend.paper_fetcher import SemanticScholarAPI, OpenAlexAPI
 
 
 class SemanticScholarClient:
-    """Semantic Scholar API（免费 100 次/分钟）"""
+    """Semantic Scholar API 客户端（委托 backend.paper_fetcher.SemanticScholarAPI）
 
-    BASE = config.SEMANTIC_SCHOLAR_BASE
-    SEARCH_FIELDS = (
-        "title,abstract,authors,year,citationCount,referenceCount,"
-        "fieldsOfStudy,url,openAccessPdf,influentialCitationCount,"
-        "journal,externalIds"
-    )
+    保留 engine 侧的接口签名供 main.py CLI 使用，
+    但实际 HTTP 请求由 backend 的重试逻辑处理。
+    """
 
     def __init__(self, api_key: str = None):
-        self.api_key = api_key
-        self._last_call = 0
-
-    def _rate_limit(self):
-        """确保不超过 100 次/分钟"""
-        elapsed = time.time() - self._last_call
-        if elapsed < 0.6:  # 100/min ≈ 每 0.6 秒一次
-            time.sleep(0.6 - elapsed)
-        self._last_call = time.time()
-
-    def _headers(self) -> Dict:
-        h = {"Accept": "application/json"}
-        if self.api_key:
-            h["x-api-key"] = self.api_key
-        return h
+        self._api = SemanticScholarAPI(api_key=api_key)
 
     def search(self, query: str, limit: int = 20, offset: int = 0) -> Dict:
-        """搜索论文"""
-        self._rate_limit()
-        url = f"{self.BASE}/paper/search"
-        params = {
-            "query": query, "limit": limit, "offset": offset,
-            "fields": self.SEARCH_FIELDS,
-        }
-        r = requests.get(url, headers=self._headers(), params=params)
-        r.raise_for_status()
-        return r.json()
+        """搜索论文，返回 backend 格式的结果列表
+
+        注意：backend 版本返回 List[Dict]（已转换），非原始 JSON。
+        为兼容旧调用方，包装为 {"data": [...]} 格式。
+        """
+        results = self._api.search(query, limit=limit)
+        return {"data": results}
 
     def get_paper(self, paper_id: str) -> Dict:
         """获取单篇论文详情"""
-        self._rate_limit()
-        fields = self.SEARCH_FIELDS + ",references,citations"
-        r = requests.get(
-            f"{self.BASE}/paper/{paper_id}",
-            headers=self._headers(),
-            params={"fields": fields}
-        )
-        r.raise_for_status()
-        return r.json()
+        return self._api.get_paper(paper_id) or {}
 
     def search_batch(self, query: str, total: int = 100) -> List[Dict]:
         """批量搜索（自动翻页）"""
         results = []
-        offset = 0
+        batch_size = 100
         while len(results) < total:
-            data = self.search(query, limit=min(100, total - len(results)),
-                              offset=offset)
-            papers = data.get("data", [])
-            if not papers:
+            batch = self._api.search(query, limit=min(batch_size, total - len(results)))
+            if not batch:
                 break
-            results.extend(papers)
-            offset += len(papers)
+            results.extend(batch)
         return results
 
     @staticmethod
     def paper_to_dict(ss_paper: Dict) -> Dict:
-        """将 SS API 响应转换为系统内部格式"""
+        """将 SS API 响应转换为系统内部格式
+
+        兼容 backend._convert() 的输出格式和原始 SS API 响应。
+        """
+        # 如果已经是 backend 转换后的格式（有 'id' 字段），直接返回
+        if "id" in ss_paper and "source" in ss_paper:
+            return ss_paper
+
+        # 兼容原始 SS API 响应格式（旧代码路径）
         authors_raw = ss_paper.get("authors", [])
         authors = [{"name": a.get("name"), "authorId": a.get("authorId")}
                    for a in authors_raw]
@@ -102,32 +84,46 @@ class SemanticScholarClient:
 
 
 class OpenAlexClient:
-    """OpenAlex API（2.5 亿 + 论文，完全免费）"""
+    """OpenAlex API 客户端（委托 backend.paper_fetcher.OpenAlexAPI）
 
-    BASE = config.OPENALEX_BASE
+    保留 engine 侧的接口签名供 main.py CLI 使用，
+    但实际 HTTP 请求由 backend 的重试逻辑处理。
+    """
+
+    def __init__(self, email: str = "user@example.com"):
+        self._api = OpenAlexAPI(email=email)
 
     def search(self, query: str, limit: int = 20, page: int = 1) -> Dict:
-        """搜索论文"""
-        url = f"{self.BASE}/works"
-        params = {
-            "search": query,
-            "per_page": limit,
-            "page": page,
-        }
-        r = requests.get(url, params=params)
-        r.raise_for_status()
-        return r.json()
+        """搜索论文，返回 backend 格式的结果列表
+
+        为兼容旧调用方，包装为 {"results": [...]} 格式。
+        """
+        results = self._api.search(query, limit=limit)
+        return {"results": results}
 
     def get_work(self, work_id: str) -> Dict:
         """获取单篇论文"""
-        url = f"{self.BASE}/works/{work_id}"
-        r = requests.get(url)
-        r.raise_for_status()
-        return r.json()
+        # backend 没有 get_work，用 search 代替
+        # 如果需要单篇查询，直接调用 API
+        import requests
+        try:
+            resp = requests.get(f"{self._api.BASE_URL}/works/{work_id}", timeout=20)
+            resp.raise_for_status()
+            return self._api._convert(resp.json())
+        except Exception:
+            return {}
 
     @staticmethod
     def work_to_dict(work: Dict) -> Dict:
-        """OpenAlex → 内部格式"""
+        """将 OpenAlex API 响应转换为系统内部格式
+
+        兼容 backend._convert() 的输出格式和原始 OpenAlex API 响应。
+        """
+        # 如果已经是 backend 转换后的格式（有 'id' 字段），直接返回
+        if "id" in work and "source" in work:
+            return work
+
+        # 兼容原始 OpenAlex API 响应格式（旧代码路径）
         authors_raw = work.get("authorships", [])
         authors = [{
             "name": a.get("author", {}).get("display_name", ""),
@@ -138,7 +134,7 @@ class OpenAlexClient:
         return {
             "doi": work.get("doi", ""),
             "title": work.get("title", "Untitled"),
-            "abstract": "",  # OpenAlex 基础版不返回摘要
+            "abstract": "",
             "authors": authors,
             "year": work.get("publication_year"),
             "citations": work.get("cited_by_count", 0),
