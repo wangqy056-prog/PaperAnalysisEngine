@@ -8,6 +8,9 @@ __pycache__/
 frontend/.env
 frontend/.env.local
 
+# BigQuery 服务账号私钥（商业机密，永不入库）
+*patent-mapper*.json
+
 # 前端依赖（上万文件，不进仓库）
 node_modules/
 frontend/node_modules/
