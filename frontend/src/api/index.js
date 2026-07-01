@@ -25,6 +25,8 @@ export const batchImportByTitles = (titles, source = 'oa') =>
 
 export const deletePaper = (paperId) => api.delete(`/papers/${paperId}`)
 
+export const getPaperPatents = (paperId) => api.get(`/papers/${paperId}/patents`)
+
 // ==================== 领研网 ====================
 export const getLinkresearcher = (pages = 1, refresh = false) =>
   api.get(`/linkresearcher?pages=${pages}${refresh ? '&refresh=true' : ''}`)

@@ -243,6 +243,21 @@ def get_paper_scorecard(paper_id: str):
         raise HTTPException(status_code=500, detail=f"评分卡生成失败：{str(e)}")
 
 
+@app.get("/api/papers/{paper_id}/patents")
+def get_paper_patents(paper_id: str):
+    """获取论文的专利引用列表"""
+    from db import get_connection
+    conn = get_connection()
+    rows = conn.execute("""
+        SELECT patent_id, assignee, publication_date, country_code, npl_text
+        FROM patent_citations
+        WHERE paper_id = ?
+        ORDER BY publication_date DESC
+    """, (paper_id,)).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
 @app.get("/api/paper/by-doi/{doi:path}/rating")
 def get_rating_by_doi(doi: str):
     """通过 DOI 查询论文评级（Zotero 插件用）

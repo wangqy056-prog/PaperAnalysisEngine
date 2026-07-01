@@ -108,6 +108,29 @@
           </el-card>
         </el-col>
       </el-row>
+
+      <!-- 专利引用卡片 -->
+      <el-card v-if="patents.length || patentsLoading" shadow="hover" style="margin-top: 20px;">
+        <template #header>
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <span>📄 专利引用</span>
+            <el-tag size="small" type="info">{{ patents.length }} 条</el-tag>
+          </div>
+        </template>
+        <div v-loading="patentsLoading">
+          <el-table v-if="patents.length" :data="patents" stripe size="small" style="width: 100%">
+            <el-table-column prop="patent_id" label="专利号" width="200">
+              <template #default="{ row }">
+                <span style="font-family: monospace; color: #409eff;">{{ row.patent_id }}</span>
+                <el-tag v-if="row.country_code" size="small" style="margin-left: 4px;">{{ row.country_code }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="assignee" label="专利持有者" min-width="180" show-overflow-tooltip />
+            <el-table-column prop="publication_date" label="公开日期" width="120" />
+            <el-table-column prop="npl_text" label="引用原文" min-width="300" show-overflow-tooltip />
+          </el-table>
+        </div>
+      </el-card>
     </template>
 
     <el-dialog v-model="showFavDialog" title="选择收藏夹" width="480px">
@@ -137,7 +160,7 @@ import { CanvasRenderer } from 'echarts/renderers'
 import { RadarChart } from 'echarts/charts'
 import { TooltipComponent, LegendComponent, TitleComponent } from 'echarts/components'
 import VChart from 'vue-echarts'
-import { getPaper, getCollections, addToCollection, aiTranslate } from '../api'
+import { getPaper, getCollections, addToCollection, aiTranslate, getPaperPatents } from '../api'
 
 use([CanvasRenderer, RadarChart, TooltipComponent, LegendComponent, TitleComponent])
 
@@ -176,10 +199,26 @@ const loadPaper = async (id) => {
     rating.value = data.rating || data.ratings?.[0] || null
     // 切换论文时清空之前的翻译
     translatedAbstract.value = ''
+    // 加载专利引用
+    loadPatents(id)
   } catch (e) {
     ElMessage.error('加载论文失败：' + (e.message || '未知错误'))
   } finally {
     loading.value = false
+  }
+}
+
+// 加载专利引用
+const loadPatents = async (id) => {
+  patentsLoading.value = true
+  patents.value = []
+  try {
+    const { data } = await getPaperPatents(id)
+    patents.value = Array.isArray(data) ? data : []
+  } catch {
+    // 静默失败，专利数据可能尚未生成
+  } finally {
+    patentsLoading.value = false
   }
 }
 
