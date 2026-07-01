@@ -1,6 +1,7 @@
 <template>
-  <div>
+  <div v-loading="loading">
     <h2>📋 仪表盘</h2>
+    <el-empty v-if="!loading && !stats" description="暂无数据" />
     <el-row :gutter="20" v-if="stats">
       <el-col :span="6">
         <el-card shadow="hover">
@@ -52,6 +53,7 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
+import { ElMessage } from 'element-plus'
 import { use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
 import { BarChart, RadarChart, LineChart } from 'echarts/charts'
@@ -63,20 +65,31 @@ use([CanvasRenderer, BarChart, RadarChart, LineChart, GridComponent, TooltipComp
 
 const stats = ref(null)
 const ratings = ref([])
+const loading = ref(false)
 
 onMounted(async () => {
-  const [statsRes, ratingsRes] = await Promise.all([
-    getStats(),
-    getRatings(9999),
-  ])
-  stats.value = statsRes.data
-  ratings.value = ratingsRes.data
+  loading.value = true
+  try {
+    const [statsRes, ratingsRes] = await Promise.all([
+      getStats(),
+      getRatings(9999),
+    ])
+    stats.value = statsRes.data
+    ratings.value = ratingsRes.data
+  } catch (e) {
+    ElMessage.error('加载仪表盘数据失败：' + (e.message || '未知错误'))
+  } finally {
+    loading.value = false
+  }
 })
 
 const gradeChart = computed(() => {
   const dist = stats.value?.level_distribution || {}
   const colors = { S: '#ff4444', A: '#ff8800', B: '#ffcc00', C: '#88cc00', D: '#88aaff', E: '#aaaaaa' }
-  const data = Object.entries(dist).map(([k, v]) => ({ value: v, name: k, itemStyle: { color: colors[k] || '#aaa' } }))
+  const gradeOrder = ['S', 'A', 'B', 'C', 'D', 'E']
+  const data = Object.entries(dist)
+    .sort((a, b) => gradeOrder.indexOf(a[0]) - gradeOrder.indexOf(b[0]))
+    .map(([k, v]) => ({ value: v, name: k, itemStyle: { color: colors[k] || '#aaa' } }))
   return {
     tooltip: { trigger: 'axis' },
     xAxis: { type: 'category', data: data.map(d => d.name) },
