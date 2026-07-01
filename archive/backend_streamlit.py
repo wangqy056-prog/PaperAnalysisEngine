@@ -31,10 +31,6 @@ from paper_fetcher import PaperFetcher
 from rating_engine import rate_paper, generate_tags, predict_commercialization
 from linkresearcher_spider import fetch_latest_papers as fetch_lr_papers
 
-# ⚠️ 废弃提示：此 Streamlit UI 已被 Vue 前端（frontend/）完全替代
-# 保留以供参考，新功能请使用 Vue + FastAPI 开发
-# 完整副本见 archive/backend_streamlit.py
-
 # ==================== 页面配置 ====================
 
 st.set_page_config(

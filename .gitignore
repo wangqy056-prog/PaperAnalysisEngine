@@ -24,3 +24,6 @@ data/
 
 # 内部文档（不进公开仓库）
 docs-internal/
+
+# 智能体框架规划文档（不进仓库）
+agent_framework/
