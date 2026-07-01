@@ -1,8 +1,25 @@
-"""评级引擎 - 五维量化评级公式实现"""
+"""评级引擎 - engine/rating.py 的薄包装层
 
+将 engine.rating.RatingEngine.calculate() 的 RatingResult 转换为 Dict 格式，
+保持 API 兼容。算法基准来自 engine/rating.py（arctan 平滑、修正因子）。
+"""
+
+import sys
 import math
 import re
+from pathlib import Path
 from typing import Dict, Optional
+
+# 添加项目根目录到 sys.path，使 engine 包可被导入
+_PROJECT_ROOT = str(Path(__file__).resolve().parent.parent)
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
+
+from engine.rating import RatingEngine, RatingResult
+from engine.config import config
+
+# 单例引擎实例
+_engine = RatingEngine()
 
 
 # ==================== 期刊权重表 ====================
@@ -304,8 +321,7 @@ def calc_combo_value(paper: Dict, related_papers: Optional[list] = None) -> floa
 
 def rate_paper(paper: Dict, patent_count: int = 0,
                market_size: float = 0, competition: str = "medium") -> Dict:
-    """
-    对论文进行五维评级
+    """对论文进行五维评级（委托给 engine.rating.RatingEngine）
 
     返回:
     {
@@ -315,41 +331,26 @@ def rate_paper(paper: Dict, patent_count: int = 0,
         "reproducibility": float,
         "combo_value": float,
         "overall_score": float,
-        "rating_level": str,  # S/A/B/C/D
+        "grade": str,  # S/A/B/C/D
+        "dimension_details": dict,
+        "decay_adjustment": float,
     }
     """
-    ratings = {
-        "academic_impact": calc_academic_impact(paper),
-        "commercial_potential": calc_commercial_potential(paper, patent_count, market_size, competition),
-        "innovation_index": calc_innovation_index(paper),
-        "reproducibility": calc_reproducibility(paper),
-        "combo_value": calc_combo_value(paper),
+    # 调用 engine 的 calculate（arctan 平滑 + 修正因子）
+    result = _engine.calculate(paper)
+
+    # RatingResult → Dict（保持 API 兼容）
+    return {
+        "academic_impact": result.academic_impact,
+        "commercial_potential": result.commercial_potential,
+        "innovation_index": result.innovation_index,
+        "reproducibility": result.reproducibility,
+        "combo_value": result.combo_value,
+        "overall_score": result.overall_score,
+        "grade": result.grade,
+        "dimension_details": result.dimension_details,
+        "decay_adjustment": result.decay_adjustment,
     }
-
-    # 综合评分（加权平均）
-    overall = (
-        ratings["academic_impact"] * 0.30 +
-        ratings["commercial_potential"] * 0.25 +
-        ratings["innovation_index"] * 0.20 +
-        ratings["reproducibility"] * 0.15 +
-        ratings["combo_value"] * 0.10
-    )
-
-    ratings["overall_score"] = round(overall, 1)
-
-    # 评级等级
-    if overall >= 90:
-        ratings["rating_level"] = "S"
-    elif overall >= 75:
-        ratings["rating_level"] = "A"
-    elif overall >= 60:
-        ratings["rating_level"] = "B"
-    elif overall >= 40:
-        ratings["rating_level"] = "C"
-    else:
-        ratings["rating_level"] = "D"
-
-    return ratings
 
 
 def predict_commercialization(paper: Dict) -> Dict:
