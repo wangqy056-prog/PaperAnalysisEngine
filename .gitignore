@@ -14,7 +14,7 @@ frontend/node_modules/
 frontend/dist/
 
 # 数据库文件（不进仓库，运行时自动创建）
-backend/papers.db
+*.db
 backend/papers_export.csv
 backend/reports/
 backend/push_queue/
@@ -27,3 +27,9 @@ docs-internal/
 
 # 智能体框架规划文档（不进仓库）
 agent_framework/
+
+# 归档目录（含业务逻辑，不进公开仓库）
+archive/
+
+# 二进制压缩包
+*.zip

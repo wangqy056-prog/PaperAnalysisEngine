@@ -187,6 +187,9 @@ const scorecardUrl = ref('')
 const scorecardFilename = ref('')
 const downloadingScorecard = ref(false)
 
+const patents = ref([])
+const patentsLoading = ref(false)
+
 const gradeColor = (grade) => {
   return { S: '#ff4444', A: '#ff8800', B: '#ffcc00', C: '#88cc00', D: '#88aaff', E: '#aaaaaa' }[grade] || '#aaa'
 }

@@ -42,14 +42,14 @@ cp .env.example .env
 编辑 `.env` 文件：
 
 ```env
-# DeepSeek V4 Flash（主力模型）
-DEEPSEEK_API_KEY=your_deepseek_api_key
+# 智谱 GLM-4-Flash（主模型，完全免费）
+GLM_API_KEY=your_glm_api_key
 
-# Groq Llama 3.3 70B（高速免费模型）
+# Groq Llama 3.3 70B（备模型，免费限额）
 GROQ_API_KEY=your_groq_api_key
 
-# 智谱 GLM-4-Flash（备用模型）
-GLM_API_KEY=your_glm_api_key
+# DeepSeek V4 Flash（末选，付费）
+DEEPSEEK_API_KEY=your_deepseek_api_key
 ```
 
 ### 2. 一键启动
@@ -131,6 +131,17 @@ python cli.py combine --min-synergy 30
 └─────────────────────────────────────────────────────────────┘
 ```
 
+### 架构统一说明
+
+| 层级 | 主实现 | 兼容层/包装层 | 说明 |
+|------|--------|-------------|------|
+| **DB 层** | `backend/db.py` | `engine/database.py` | engine 侧为薄兼容层，委托 backend 实现 |
+| **评级引擎** | `engine/rating.py` | `backend/rating_engine.py` | backend 侧为薄包装层，调用 engine 算法 |
+| **API 客户端** | `backend/paper_fetcher.py` | `engine/api_client.py` | engine 侧复用 backend 的重试逻辑 |
+| **LLM 调用** | `backend/llm_analyzer.py` | - | 自动 fallback 链：glm→groq→deepseek（省钱优先） |
+
+> ⚠️ **Streamlit UI 已废弃**：`backend/app.py` 保留供参考，新功能请使用 Vue + FastAPI 开发。完整副本见 `archive/backend_streamlit.py`。
+
 ### 技术栈
 
 | 层级 | 技术 | 版本 |
@@ -140,9 +151,9 @@ python cli.py combine --min-synergy 30
 | **UI 框架** | Element Plus | 2.7+ |
 | **图表** | ECharts | 5.5+ |
 | **图谱** | vis-network | 9.1+ |
-| **LLM** | DeepSeek V4 Flash | - |
-| **LLM** | Groq Llama 3.3 70B | - |
-| **LLM** | 智谱 GLM-4-Flash | - |
+| **LLM** | 智谱 GLM-4-Flash（主） | - |
+| **LLM** | Groq Llama 3.3 70B（备） | - |
+| **LLM** | DeepSeek V4 Flash（末选） | - |
 | **数据库** | SQLite | - |
 | **部署** | Docker + docker-compose | 24.0+ |
 
@@ -174,17 +185,25 @@ Paper_Analysis_Engine/
 ├── LICENSE                    # AGPL 许可证
 ├── .env.example              # 环境变量模板
 ├── docker-compose.yml        # Docker Compose 配置
+├── requirements.txt          # 根目录依赖（同步自 backend/）
+├── main.py                   # CLI 入口
+├── archive/                  # 归档目录（Streamlit 备份）
+│   └── backend_streamlit.py  # 废弃的 Streamlit UI 副本
 ├── backend/
 │   ├── Dockerfile           # 后端 Docker 配置
 │   ├── requirements.txt     # Python 依赖
 │   ├── api/
 │   │   └── main.py          # FastAPI 入口
-│   ├── db.py                # SQLite 数据库操作
-│   ├── llm_analyzer.py      # LLM 分析模块
-│   ├── rating_engine.py     # 五维评级引擎
+│   ├── db.py                # SQLite 数据库操作（主实现）
+│   ├── llm_analyzer.py      # LLM 分析模块（fallback 链）
+│   ├── rating_engine.py     # 评级引擎（薄包装层）
 │   ├── knowledge_graph.py   # 知识图谱构建
-│   ├── paper_fetcher.py     # 论文抓取器
+│   ├── paper_fetcher.py     # 论文抓取器（主实现）
 │   └── linkresearcher_spider.py  # 领研网爬虫
+├── engine/
+│   ├── rating.py            # 评级算法（主实现）
+│   ├── database.py          # DB 兼容层
+│   └── api_client.py        # API 客户端（薄包装层）
 ├── frontend/
 │   ├── Dockerfile           # 前端 Docker 配置
 │   ├── nginx.conf           # Nginx 反向代理
@@ -196,7 +215,7 @@ Paper_Analysis_Engine/
 │       ├── views/           # 页面组件
 │       ├── api/             # API 封装
 │       └── components/      # 通用组件
-└── 11_项目日志/              # 项目文档与日志
+└── docs/                     # 公开文档
 ```
 
 ---
