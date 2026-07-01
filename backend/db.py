@@ -17,6 +17,32 @@ def get_connection():
     return conn
 
 
+def _migrate_legacy_columns(cursor):
+    """数据库迁移：rating_level → grade"""
+    cursor.execute("PRAGMA table_info(ratings)")
+    columns = {row[1] for row in cursor.fetchall()}
+
+    if "rating_level" in columns and "grade" not in columns:
+        cursor.execute("ALTER TABLE ratings RENAME COLUMN rating_level TO grade")
+        print("[MIGRATE] ratings.rating_level → grade")
+
+    # 给 papers 表补充缺失字段
+    cursor.execute("PRAGMA table_info(papers)")
+    paper_columns = {row[1] for row in cursor.fetchall()}
+    for col, col_type in [("source_id", "TEXT"), ("fetched_at", "TEXT"), ("updated_at", "TEXT")]:
+        if col not in paper_columns:
+            cursor.execute(f"ALTER TABLE papers ADD COLUMN {col} {col_type}")
+            print(f"[MIGRATE] papers +{col}")
+
+    # 给 ratings 表补充缺失字段
+    cursor.execute("PRAGMA table_info(ratings)")
+    rating_columns = {row[1] for row in cursor.fetchall()}
+    for col, col_type in [("dimension_details", "JSON"), ("decay_adjustment", "REAL DEFAULT 0"), ("rated_at", "TEXT")]:
+        if col not in rating_columns:
+            cursor.execute(f"ALTER TABLE ratings ADD COLUMN {col} {col_type}")
+            print(f"[MIGRATE] ratings +{col}")
+
+
 def init_db():
     """初始化数据库表结构"""
     conn = get_connection()
@@ -53,7 +79,7 @@ def init_db():
         reproducibility REAL DEFAULT 0,
         combo_value REAL DEFAULT 50,
         overall_score REAL DEFAULT 0,
-        rating_level TEXT DEFAULT 'C',
+        grade TEXT DEFAULT 'C',
         analysis_date TEXT DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (paper_id) REFERENCES papers (id)
     )
@@ -187,6 +213,7 @@ def init_db():
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_ratings_paper ON user_ratings(paper_id)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_push_history_sub ON push_history(subscription_id)")
 
+    _migrate_legacy_columns(cursor)
     conn.commit()
     conn.close()
     print(f"[OK] 数据库已初始化: {DB_PATH}")
@@ -251,39 +278,27 @@ def insert_paper(paper: dict) -> bool:
 
 
 def insert_rating(paper_id: str, ratings: dict):
-    """插入评级数据"""
+    """插入评级数据
+
+    overall_score 和 grade 由评级引擎计算好传入，DB 层不重复计算。
+    """
     conn = get_connection()
     cursor = conn.cursor()
 
-    # 计算综合评分
-    overall = (
-        ratings.get("academic_impact", 0) * 0.30 +
-        ratings.get("commercial_potential", 0) * 0.25 +
-        ratings.get("innovation_index", 0) * 0.20 +
-        ratings.get("reproducibility", 0) * 0.15 +
-        ratings.get("combo_value", 50) * 0.10
-    )
-
-    # 确定评级等级
-    if overall >= 90:
-        level = "S"
-    elif overall >= 75:
-        level = "A"
-    elif overall >= 60:
-        level = "B"
-    elif overall >= 40:
-        level = "C"
-    else:
-        level = "D"
+    # 直接使用评级引擎算好的值
+    overall = ratings.get("overall_score", 0)
+    grade = ratings.get("grade") or ratings.get("rating_level") or "D"
+    now = datetime.now().isoformat()
 
     try:
-        # 先删除该论文的旧评级（避免重复累积；ratings 表 paper_id 无 UNIQUE 约束）
+        # 先删除该论文的旧评级
         cursor.execute("DELETE FROM ratings WHERE paper_id = ?", (paper_id,))
         cursor.execute("""
         INSERT INTO ratings
         (paper_id, academic_impact, commercial_potential, innovation_index,
-         reproducibility, combo_value, overall_score, rating_level, analysis_date)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+         reproducibility, combo_value, overall_score, grade,
+         dimension_details, decay_adjustment, analysis_date, rated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             paper_id,
             ratings.get("academic_impact", 0),
@@ -292,8 +307,11 @@ def insert_rating(paper_id: str, ratings: dict):
             ratings.get("reproducibility", 0),
             ratings.get("combo_value", 50),
             overall,
-            level,
-            datetime.now().isoformat(),
+            grade,
+            json.dumps(ratings.get("dimension_details", {}), ensure_ascii=False),
+            ratings.get("decay_adjustment", 0),
+            now,
+            now,
         ))
         conn.commit()
         return overall
@@ -382,8 +400,7 @@ def get_all_ratings(limit: int = 100, order_by: str = "overall_score") -> list:
     cursor.execute(f"""
     SELECT p.id, p.title, p.year, p.citations, p.journal,
            MAX(r.overall_score) AS overall_score,
-           MAX(r.rating_level) AS rating_level,
-           MAX(r.rating_level) AS grade,
+           MAX(r.grade) AS grade,
            MAX(r.academic_impact) AS academic_impact,
            MAX(r.commercial_potential) AS commercial_potential,
            MAX(r.innovation_index) AS innovation_index,
@@ -429,12 +446,12 @@ def get_stats() -> dict:
     stats["min_score"] = round(row["min_score"], 1) if row["min_score"] else 0
 
     cursor.execute("""
-    SELECT rating_level, COUNT(*) as count 
-    FROM ratings 
-    GROUP BY rating_level 
-    ORDER BY rating_level
+    SELECT grade, COUNT(*) as count
+    FROM ratings
+    GROUP BY grade
+    ORDER BY grade
     """)
-    stats["level_distribution"] = {row["rating_level"]: row["count"] for row in cursor.fetchall()}
+    stats["level_distribution"] = {row["grade"]: row["count"] for row in cursor.fetchall()}
 
     # 年份分布统计
     cursor.execute("SELECT year, COUNT(*) as count FROM papers WHERE year IS NOT NULL GROUP BY year ORDER BY year")
