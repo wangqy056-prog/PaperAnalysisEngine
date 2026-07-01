@@ -148,26 +148,47 @@ def _call_groq(messages: list, temperature: float = 0.3, max_tokens: int = 2000)
 
 
 def call_llm(messages: list, temperature: float = 0.3, max_tokens: int = 2000) -> Optional[str]:
-    """调用 LLM，自动选择模型，失败时依次切换备用模型"""
-    fallback_chain = {
-        "glm": [_call_glm, _call_groq, _call_deepseek],
-        "groq": [_call_groq, _call_glm, _call_deepseek],
-        "deepseek": [_call_deepseek, _call_groq, _call_glm],
-    }
-    providers = fallback_chain.get(CURRENT_PROVIDER, [_call_deepseek, _call_groq, _call_glm])
-    provider_names = {
-        _call_deepseek: "DeepSeek V4 Flash",
-        _call_groq: "Groq Llama 3.3 70B",
-        _call_glm: "GLM-4-Flash",
-    }
+    """调用 LLM，自动 fallback 链：glm → groq → deepseek（省钱优先）
 
-    for i, provider in enumerate(providers):
-        result = provider(messages, temperature, max_tokens)
-        if result:
-            return result
+    - 完全免费：GLM-4-Flash
+    - 免费限额：Groq Llama 3.3 70B
+    - 付费：DeepSeek V4 Flash
+
+    主模型失败（返回 None 或抛异常）时自动尝试下一个，API Key 为空则跳过。
+    """
+    # fallback 链：省钱优先 glm → groq → deepseek
+    providers = [
+        ("glm",      _call_glm,      GLM_API_KEY),
+        ("groq",     _call_groq,     GROQ_API_KEY),
+        ("deepseek", _call_deepseek, DEEPSEEK_API_KEY),
+    ]
+
+    # 如果 CURRENT_PROVIDER 不是 glm，将其提到链首
+    if CURRENT_PROVIDER != "glm":
+        for i, (name, _, _) in enumerate(providers):
+            if name == CURRENT_PROVIDER:
+                providers.insert(0, providers.pop(i))
+                break
+
+    for i, (name, func, api_key) in enumerate(providers):
+        # API Key 为空则跳过
+        if not api_key:
+            continue
+
+        try:
+            result = func(messages, temperature, max_tokens)
+            if result:
+                return result
+        except Exception as e:
+            print(f"  [LLM] {name} 异常: {e}")
+
+        # 失败，尝试下一个
         if i < len(providers) - 1:
-            next_name = provider_names[providers[i + 1]]
-            print(f"  [LLM] 切换到备用模型 {next_name}...")
+            # 找下一个有 API Key 的 provider
+            for j in range(i + 1, len(providers)):
+                if providers[j][2]:
+                    print(f"  [LLM] {name} 失败，降级到 {providers[j][0]}")
+                    break
 
     return None
 
