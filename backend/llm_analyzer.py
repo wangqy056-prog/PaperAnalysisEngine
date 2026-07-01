@@ -150,9 +150,9 @@ def _call_groq(messages: list, temperature: float = 0.3, max_tokens: int = 2000)
 def call_llm(messages: list, temperature: float = 0.3, max_tokens: int = 2000) -> Optional[str]:
     """调用 LLM，自动选择模型，失败时依次切换备用模型"""
     fallback_chain = {
+        "glm": [_call_glm, _call_groq, _call_deepseek],
+        "groq": [_call_groq, _call_glm, _call_deepseek],
         "deepseek": [_call_deepseek, _call_groq, _call_glm],
-        "groq": [_call_groq, _call_deepseek, _call_glm],
-        "glm": [_call_glm, _call_deepseek, _call_groq],
     }
     providers = fallback_chain.get(CURRENT_PROVIDER, [_call_deepseek, _call_groq, _call_glm])
     provider_names = {
