@@ -1,11 +1,16 @@
 #!/usr/bin/env python
-"""Patent Citation Mapper — 通过 PatentsView 免费 API 查询论文-专利引用映射
+"""Patent Citation Mapper — 多后端专利引用查询
 
-替代原 BigQuery 方案，无需 GCP 私钥，纯 HTTP 调用。
+支持的后端（通过 BACKENDS 注册表管理）：
+  patentsview — PatentsView 免费 API（默认，无需 API Key）
+
+注册新后端：在 BACKENDS 字典中添加 {"name": {"check": fn, "search": fn}} 即可，
+run() 会自动通过 backend 参数选择对应后端，无需修改主流程代码。
 
 用法：
-  python patent_mapper.py --test 5       # 测试模式：处理 5 篇
-  python patent_mapper.py --limit 1151   # 批量模式：处理全部
+  python patent_mapper.py --test 5                         # 测试模式：处理 5 篇
+  python patent_mapper.py --limit 1151                     # 全量模式：处理全部
+  python patent_mapper.py --test 5 --backend patentsview   # 指定后端
 """
 
 import os
@@ -184,7 +189,9 @@ _api_available = None  # 缓存 API 可用性检测结果
 
 
 def check_api_available():
-    """检测 PatentsView API 是否可用（DNS 解析 + HTTP 连通性）
+    """检测 PatentsView API 是否可用（HTTP 连通性测试）
+
+    直接用 requests 试连，会自动走 HTTP_PROXY/HTTPS_PROXY 环境变量代理。
 
     返回: (可用端点 URL, None) 或 (None, 错误原因)
     """
@@ -192,13 +199,10 @@ def check_api_available():
     if _api_available is not None:
         return _api_available
 
-    import socket
     import json as _json
 
-    # 1. 尝试新端点 (search.patentsview.org)
+    # 1. 尝试新端点 (search.patentsview.org) — GET 请求
     try:
-        socket.getaddrinfo("search.patentsview.org", 443, socket.AF_INET, socket.SOCK_STREAM)
-        # DNS 可解析，测试 HTTP 连通性
         test_params = {
             "q": _json.dumps({"_text_any": {"patent_title": "test"}}),
             "f": _json.dumps(["patent_id"]),
@@ -208,21 +212,20 @@ def check_api_available():
         if resp.status_code == 200 and "application/json" in resp.headers.get("content-type", ""):
             _api_available = (PATENTSVIEW_URL, None)
             return _api_available
-    except (socket.gaierror, Exception):
+    except Exception:
         pass
 
-    # 2. 尝试旧端点 (api.patentsview.org)
+    # 2. 尝试旧端点 (api.patentsview.org) — POST 请求
     try:
-        socket.getaddrinfo("api.patentsview.org", 443, socket.AF_INET, socket.SOCK_STREAM)
         test_payload = {"q": {"_text_any": {"patent_title": "test"}}, "f": ["patent_id"], "o": {"per_page": 1}}
         resp = requests.post(PATENTSVIEW_OLD_URL, json=test_payload, timeout=15)
         if resp.status_code == 200 and "application/json" in resp.headers.get("content-type", ""):
             _api_available = (PATENTSVIEW_OLD_URL, None)
             return _api_available
-    except (socket.gaierror, Exception):
+    except Exception:
         pass
 
-    _api_available = (None, "PatentsView API 不可用（DNS 无法解析或服务已迁移）")
+    _api_available = (None, "PatentsView API 不可用（网络不通或服务已迁移）")
     return _api_available
 
 
@@ -301,17 +304,38 @@ def search_patents_by_paper(paper_id, title):
 
 
 # ──────────────────────────────────────────────
+#  后端注册表 — 新增后端只需在此注册即可
+# ──────────────────────────────────────────────
+
+BACKENDS = {
+    "patentsview": {
+        "check": check_api_available,
+        "search": search_patents_by_paper,
+    },
+}
+
+
+# ──────────────────────────────────────────────
 #  主流程
 # ──────────────────────────────────────────────
 
-def run(limit=0, test_mode=0):
+def run(limit=0, test_mode=0, backend="patentsview"):
     ensure_patent_table()
 
+    # 从注册表获取后端函数
+    if backend not in BACKENDS:
+        print(f"\n  ⚠️  未知后端: {backend}")
+        print(f"  可用后端: {', '.join(BACKENDS.keys())}")
+        return
+
+    check_fn = BACKENDS[backend]["check"]
+    search_fn = BACKENDS[backend]["search"]
+
     # 检测 API 可用性
-    api_url, error = check_api_available()
+    api_url, error = check_fn()
     if api_url is None:
         print(f"\n{'='*60}")
-        print(f"  ⚠️  PatentsView API 不可用")
+        print(f"  ⚠️  [{backend}] API 不可用")
         print(f"  原因: {error}")
         print(f"")
         print(f"  PatentsView 已于 2026-03-20 迁移到 USPTO Open Data Portal")
@@ -320,7 +344,7 @@ def run(limit=0, test_mode=0):
         print(f"  解决方案:")
         print(f"  1. 配置代理/VPN 后重新运行")
         print(f"  2. 在海外服务器上运行此脚本")
-        print(f"  3. 使用 EPO OPS API 作为替代（需注册 API Key）")
+        print(f"  3. 使用 --backend 指定其他后端（如 epo_ops）")
         print(f"{'='*60}")
         return
 
@@ -332,7 +356,7 @@ def run(limit=0, test_mode=0):
 
     total_papers = len(papers)
     print(f"\n{'='*60}")
-    print(f"  专利引用映射 (PatentsView API)")
+    print(f"  专利引用映射 (backend={backend})")
     print(f"  本次处理: {total_papers} 篇")
     print(f"  API: {api_url}")
     print(f"{'='*60}\n")
@@ -346,7 +370,7 @@ def run(limit=0, test_mode=0):
     miss_pids = []
 
     for i, (paper_id, title) in enumerate(papers, 1):
-        results, search_term = search_patents_by_paper(paper_id, title)
+        results, search_term = search_fn(paper_id, title)
 
         if results:
             patent_count, hit_count = save_results(results)
@@ -359,7 +383,7 @@ def run(limit=0, test_mode=0):
         if i % 50 == 0 or i == total_papers:
             print(f"  [{i}/{total_papers}] {title[:40]}... → {len(results)} patents")
 
-        # PatentsView 限速：≤1 请求/秒
+        # 限速：≤1 请求/秒
         time.sleep(1.3)
 
     # 批量标记无匹配的论文
@@ -385,12 +409,15 @@ def run(limit=0, test_mode=0):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="专利引用映射 — PatentsView API")
+    parser = argparse.ArgumentParser(description="专利引用映射 — 多后端支持")
     parser.add_argument("--limit", type=int, default=0, help="处理论文数量（0=全部）")
     parser.add_argument("--test", type=int, default=0, help="测试模式：处理指定数量")
+    parser.add_argument("--backend", type=str, default="patentsview",
+                        choices=list(BACKENDS.keys()),
+                        help="专利数据后端（默认: patentsview）")
     args = parser.parse_args()
 
     if args.test:
-        run(test_mode=args.test)
+        run(test_mode=args.test, backend=args.backend)
     else:
-        run(limit=args.limit)
+        run(limit=args.limit, backend=args.backend)
