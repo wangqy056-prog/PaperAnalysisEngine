@@ -1,7 +1,7 @@
 #!/usr/bin/env python
-"""Patent Citation Mapper — 批量查询 BigQuery 专利数据库，建立论文-专利引用映射
+"""Patent Citation Mapper — 通过 PatentsView 免费 API 查询论文-专利引用映射
 
-核心优化：单次 JOIN 查询全部论文，扫描量 ~27GB（而非逐篇 61.7TB）
+替代原 BigQuery 方案，无需 GCP 私钥，纯 HTTP 调用。
 
 用法：
   python patent_mapper.py --test 5       # 测试模式：处理 5 篇
@@ -10,24 +10,21 @@
 
 import os
 import re
+import time
 import argparse
+import requests
 from pathlib import Path
 
-# 加载 .env 环境变量
 from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent.parent / ".env")
 
-# 设置 BigQuery 凭证路径
-_credentials_rel = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "")
-if _credentials_rel and not os.path.isabs(_credentials_rel):
-    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = str(
-        Path(__file__).parent.parent / _credentials_rel
-    )
-
 from db import get_connection
-from google.cloud import bigquery
 
-PATENTS_TABLE = "patents-public-data.patents.publications"
+# PatentsView API 已于 2026-03-20 迁移到 USPTO Open Data Portal
+# 新端点：https://search.patentsview.org/api/v1/patent/ (GET)
+# 旧端点：https://api.patentsview.org/patents/query (POST) 已废弃返回 HTML
+PATENTSVIEW_URL = "https://search.patentsview.org/api/v1/patent/"
+PATENTSVIEW_OLD_URL = "https://api.patentsview.org/patents/query"
 
 
 # ──────────────────────────────────────────────
@@ -98,14 +95,27 @@ def mark_paper_queried(paper_id, match_count):
 
 
 def save_results(results):
-    """保存批量查询结果到 patent_citations，同时标记 queried"""
+    """保存查询结果到 patent_citations，同时标记 queried
+
+    字段映射（PatentsView → patent_citations 表）：
+      patent_id       → patent_id
+      patent_title    → npl_text
+      patent_date     → publication_date
+      assignee_entity → assignee
+      paper_id        → paper_id
+      matched_by      → matched_by
+      country_code    → "US"
+    """
+    if not results:
+        return 0, 0
+
     conn = get_connection()
     patent_count = 0
-    paper_hits = {}  # paper_id -> count
+    paper_hits = {}
 
     for row in results:
         pid = row["paper_id"]
-        pub_date = str(row["publication_date"]) if row["publication_date"] else None
+        pub_date = row.get("publication_date") or ""
         if pub_date and len(pub_date) == 8:
             pub_date = f"{pub_date[:4]}-{pub_date[4:6]}-{pub_date[6:8]}"
 
@@ -115,21 +125,17 @@ def save_results(results):
             VALUES (?, ?, ?, ?, ?, ?, ?)
         """, (
             pid,
-            row["publication_number"],
-            row["assignee"],
+            row["patent_id"],
+            row.get("assignee") or "",
             pub_date,
-            row["country_code"],
-            (row["npl_text"] or "")[:500],
-            row["matched_by"],
+            row.get("country_code") or "US",
+            (row.get("npl_text") or "")[:500],
+            row.get("matched_by") or "",
         ))
         patent_count += 1
         paper_hits[pid] = paper_hits.get(pid, 0) + 1
 
-    # 标记所有论文为已查询（包括无匹配的）
-    conn.close()
-
-    # 分开事务：先保存 citations，再标记 queried
-    conn = get_connection()
+    # 标记有匹配的论文
     for pid, cnt in paper_hits.items():
         conn.execute("""
             INSERT OR REPLACE INTO patent_query_log (paper_id, match_count)
@@ -156,7 +162,7 @@ def mark_all_queried(paper_ids):
 
 
 # ──────────────────────────────────────────────
-#  BigQuery 批量搜索
+#  PatentsView API 搜索
 # ──────────────────────────────────────────────
 
 STOP_WORDS = frozenset(
@@ -174,67 +180,124 @@ def extract_search_term(title, n=3):
     return " ".join(significant[:n]) if significant else " ".join(words[:n])
 
 
-def batch_search(client, papers):
-    """批量搜索：上传搜索词到 BigQuery 临时表，单次 JOIN 查全部
+_api_available = None  # 缓存 API 可用性检测结果
 
-    扫描量 ≈ 27GB（ patents 表 npl_text 列），而非 27GB × 1151 = 31TB
+
+def check_api_available():
+    """检测 PatentsView API 是否可用（DNS 解析 + HTTP 连通性）
+
+    返回: (可用端点 URL, None) 或 (None, 错误原因)
     """
-    project = client.project
-    dataset_id = f"{project}.pae_temp"
-    table_id = f"{dataset_id}.search_terms"
+    global _api_available
+    if _api_available is not None:
+        return _api_available
 
-    # 1. 创建临时 dataset
-    client.create_dataset(dataset_id, exists_ok=True)
+    import socket
+    import json as _json
 
-    # 2. 上传搜索词到临时表
-    rows = [
-        {"paper_id": p["id"], "term": extract_search_term(p["title"], n=3)}
-        for p in papers
-    ]
-    # 过滤掉 term 太短（<3 字符）的，避免误匹配
-    rows = [r for r in rows if len(r["term"]) >= 3]
+    # 1. 尝试新端点 (search.patentsview.org)
+    try:
+        socket.getaddrinfo("search.patentsview.org", 443, socket.AF_INET, socket.SOCK_STREAM)
+        # DNS 可解析，测试 HTTP 连通性
+        test_params = {
+            "q": _json.dumps({"_text_any": {"patent_title": "test"}}),
+            "f": _json.dumps(["patent_id"]),
+            "o": _json.dumps({"per_page": 1})
+        }
+        resp = requests.get(PATENTSVIEW_URL, params=test_params, timeout=15)
+        if resp.status_code == 200 and "application/json" in resp.headers.get("content-type", ""):
+            _api_available = (PATENTSVIEW_URL, None)
+            return _api_available
+    except (socket.gaierror, Exception):
+        pass
 
-    print(f"  上传 {len(rows)} 条搜索词到 BigQuery 临时表...")
+    # 2. 尝试旧端点 (api.patentsview.org)
+    try:
+        socket.getaddrinfo("api.patentsview.org", 443, socket.AF_INET, socket.SOCK_STREAM)
+        test_payload = {"q": {"_text_any": {"patent_title": "test"}}, "f": ["patent_id"], "o": {"per_page": 1}}
+        resp = requests.post(PATENTSVIEW_OLD_URL, json=test_payload, timeout=15)
+        if resp.status_code == 200 and "application/json" in resp.headers.get("content-type", ""):
+            _api_available = (PATENTSVIEW_OLD_URL, None)
+            return _api_available
+    except (socket.gaierror, Exception):
+        pass
 
-    job_config = bigquery.LoadJobConfig(
-        schema=[
-            bigquery.SchemaField("paper_id", "STRING"),
-            bigquery.SchemaField("term", "STRING"),
-        ],
-        write_disposition="WRITE_TRUNCATE",
-    )
-    load_job = client.load_table_from_json(rows, table_id, job_config=job_config)
-    load_job.result()  # 等待完成
-    print(f"  临时表已创建: {table_id}")
+    _api_available = (None, "PatentsView API 不可用（DNS 无法解析或服务已迁移）")
+    return _api_available
 
-    # 3. 单次 JOIN 查询
-    query = f"""
-        SELECT
-          t.paper_id,
-          p.publication_number,
-          c.npl_text,
-          p.publication_date,
-          p.country_code,
-          (SELECT STRING_AGG(DISTINCT a, ', ')
-           FROM UNNEST(p.assignee) a) AS assignee,
-          t.term AS matched_by
-        FROM `{PATENTS_TABLE}` p,
-        UNNEST(citation) AS c,
-        `{table_id}` t
-        WHERE c.npl_text IS NOT NULL
-          AND LOWER(c.npl_text) LIKE CONCAT('%', LOWER(t.term), '%')
-        LIMIT 5000
+
+def search_patents_by_paper(paper_id, title):
+    """通过 PatentsView 免费 API 查询引用该论文的专利
+
+    处理流程：
+    1. 用 extract_search_term(title, n=3) 提取搜索关键词
+    2. 发送请求到 PatentsView（带 30 秒超时）
+    3. 解析响应中的 patents 列表
+    4. 映射为 patent_citations 表需要的字段格式
+
+    注意：
+    - PatentsView 要求 ≤1 请求/秒，调用方需控制频率
+    - 如果请求失败（非 200），返回空列表 []
+    - 如果解析异常，也要兜住，不中断主流程
     """
-    print(f"  执行批量 JOIN 查询（预计扫描 ~27GB）...")
-    job = client.query(query)
-    results = list(job.result())
-    bytes_processed = job.total_bytes_processed or 0
+    search_term = extract_search_term(title, n=3)
+    if not search_term or len(search_term) < 3:
+        return [], search_term
 
-    # 4. 清理临时表
-    client.delete_table(table_id, not_found_ok=True)
-    print(f"  临时表已清理")
+    api_url, error = check_api_available()
+    if api_url is None:
+        return [], search_term
 
-    return results, bytes_processed
+    import json as _json
+
+    try:
+        if api_url == PATENTSVIEW_URL:
+            # 新端点：GET 请求
+            params = {
+                "q": _json.dumps({"_text_any": {"patent_title": search_term}}),
+                "f": _json.dumps(["patent_id", "patent_title", "patent_date", "assignees.assignee_entity"]),
+                "o": _json.dumps({"per_page": 50})
+            }
+            resp = requests.get(api_url, params=params, timeout=30)
+        else:
+            # 旧端点：POST 请求
+            payload = {
+                "q": {"_text_any": {"patent_npl_text": search_term}},
+                "f": ["patent_id", "patent_title", "patent_date", "assignee_entity"]
+            }
+            resp = requests.post(api_url, json=payload, timeout=30)
+
+        if resp.status_code != 200:
+            return [], search_term
+
+        data = resp.json()
+        patents = data.get("patents", [])
+
+        results = []
+        for p in patents:
+            assignees = p.get("assignees", [])
+            assignee_name = ""
+            if assignees and isinstance(assignees, list):
+                first = assignees[0]
+                if isinstance(first, dict):
+                    assignee_name = first.get("assignee_entity", "")
+                else:
+                    assignee_name = str(first)
+
+            results.append({
+                "paper_id": paper_id,
+                "patent_id": p.get("patent_id", ""),
+                "npl_text": p.get("patent_title", ""),
+                "publication_date": p.get("patent_date", ""),
+                "assignee": assignee_name,
+                "country_code": "US",
+                "matched_by": search_term,
+            })
+
+        return results, search_term
+
+    except Exception:
+        return [], search_term
 
 
 # ──────────────────────────────────────────────
@@ -243,7 +306,23 @@ def batch_search(client, papers):
 
 def run(limit=0, test_mode=0):
     ensure_patent_table()
-    client = bigquery.Client()
+
+    # 检测 API 可用性
+    api_url, error = check_api_available()
+    if api_url is None:
+        print(f"\n{'='*60}")
+        print(f"  ⚠️  PatentsView API 不可用")
+        print(f"  原因: {error}")
+        print(f"")
+        print(f"  PatentsView 已于 2026-03-20 迁移到 USPTO Open Data Portal")
+        print(f"  新端点 search.patentsview.org 在当前网络环境下无法访问")
+        print(f"")
+        print(f"  解决方案:")
+        print(f"  1. 配置代理/VPN 后重新运行")
+        print(f"  2. 在海外服务器上运行此脚本")
+        print(f"  3. 使用 EPO OPS API 作为替代（需注册 API Key）")
+        print(f"{'='*60}")
+        return
 
     n = test_mode or limit
     if n:
@@ -253,23 +332,37 @@ def run(limit=0, test_mode=0):
 
     total_papers = len(papers)
     print(f"\n{'='*60}")
-    print(f"  专利引用映射 (BigQuery 批量 JOIN)")
+    print(f"  专利引用映射 (PatentsView API)")
     print(f"  本次处理: {total_papers} 篇")
+    print(f"  API: {api_url}")
     print(f"{'='*60}\n")
 
     if not papers:
         print("  无待处理论文")
         return
 
-    # 批量查询
-    results, bytes_processed = batch_search(client, papers)
+    total_patents = 0
+    hit_papers = 0
+    miss_pids = []
 
-    # 保存结果
-    patent_count, hit_count = save_results(results)
+    for i, (paper_id, title) in enumerate(papers, 1):
+        results, search_term = search_patents_by_paper(paper_id, title)
 
-    # 标记无匹配的论文
-    hit_pids = {r["paper_id"] for r in results}
-    miss_pids = [p["id"] for p in papers if p["id"] not in hit_pids]
+        if results:
+            patent_count, hit_count = save_results(results)
+            total_patents += patent_count
+            hit_papers += hit_count
+        else:
+            miss_pids.append(paper_id)
+
+        # 每处理 50 篇打印进度
+        if i % 50 == 0 or i == total_papers:
+            print(f"  [{i}/{total_papers}] {title[:40]}... → {len(results)} patents")
+
+        # PatentsView 限速：≤1 请求/秒
+        time.sleep(1.3)
+
+    # 批量标记无匹配的论文
     mark_all_queried(miss_pids)
 
     # 统计
@@ -278,22 +371,21 @@ def run(limit=0, test_mode=0):
         "SELECT COUNT(*) FROM papers WHERE id NOT IN "
         "(SELECT paper_id FROM patent_query_log)"
     ).fetchone()[0]
-    total_patents = conn.execute("SELECT COUNT(*) FROM patent_citations").fetchone()[0]
+    db_total = conn.execute("SELECT COUNT(*) FROM patent_citations").fetchone()[0]
     conn.close()
 
     print(f"\n{'='*60}")
     print(f"  专利映射完成")
     print(f"  处理论文:   {total_papers}")
-    print(f"  命中论文:   {hit_count}")
-    print(f"  专利引用:   {patent_count}")
-    print(f"  总专利引用: {total_patents}")
+    print(f"  命中论文:   {hit_papers}")
+    print(f"  本次专利:   {total_patents}")
+    print(f"  总专利引用: {db_total}")
     print(f"  剩余待查:   {remaining}")
-    print(f"  扫描总量:   {bytes_processed/1e9:.2f} GB")
     print(f"{'='*60}")
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="专利引用映射 — BigQuery 批量")
+    parser = argparse.ArgumentParser(description="专利引用映射 — PatentsView API")
     parser.add_argument("--limit", type=int, default=0, help="处理论文数量（0=全部）")
     parser.add_argument("--test", type=int, default=0, help="测试模式：处理指定数量")
     args = parser.parse_args()
