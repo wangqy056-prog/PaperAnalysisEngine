@@ -24,9 +24,8 @@
           <el-descriptions-item label="年份">{{ paper.year || '-' }}</el-descriptions-item>
           <el-descriptions-item label="引用数">{{ paper.citations ?? 0 }}</el-descriptions-item>
           <el-descriptions-item label="DOI">{{ paper.doi || '-' }}</el-descriptions-item>
-          <el-descriptions-item label="类型">{{ paper.paper_type || '-' }}</el-descriptions-item>
           <el-descriptions-item label="评级">
-            <el-tag v-if="paper.grade || paper.rating_level" :color="gradeColor(paper.grade || paper.rating_level)" effect="dark">{{ paper.grade || paper.rating_level }}</el-tag>
+            <el-tag v-if="rating?.grade" :color="gradeColor(rating.grade)" effect="dark">{{ rating.grade }}</el-tag>
             <span v-else>-</span>
           </el-descriptions-item>
         </el-descriptions>
